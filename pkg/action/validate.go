@@ -45,3 +45,29 @@ func existingResourceConflict(resources kube.ResourceList) error {
 	})
 	return err
 }
+
+func resourcesToBeCreated(resources kube.ResourceList, sharedResource map[string]bool) (kube.ResourceList, error) {
+	toBeCreated := kube.ResourceList{}
+	err := resources.Visit(func(info *resource.Info, err error) error {
+		if err != nil {
+			return err
+		}
+
+		helper := resource.NewHelper(info.Client, info.Mapping)
+		if _, err := helper.Get(info.Namespace, info.Name, info.Export); err != nil {
+			if apierrors.IsNotFound(err) {
+				toBeCreated = append(toBeCreated, info)
+				return nil
+			}
+
+			return errors.Wrap(err, "could not get information about the resource")
+		}
+
+		gvk := info.Object.GetObjectKind().GroupVersionKind()
+		if sharedResource[objectKey(gvk, info.Name)] {
+			return nil
+		}
+		return fmt.Errorf("existing resource conflict: kind: %s, namespace: %s, name: %s", info.Mapping.GroupVersionKind.Kind, info.Namespace, info.Name)
+	})
+	return toBeCreated, err
+}

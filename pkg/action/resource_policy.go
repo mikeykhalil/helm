@@ -28,27 +28,42 @@ const resourcePolicyAnno = "helm.sh/resource-policy"
 // keepPolicy is the resource policy type for keep
 //
 // This resource policy type allows resources to skip being deleted
-//   during an uninstallRelease action.
+// during an uninstallRelease action.
 const keepPolicy = "keep"
 
+// sharePolicy is the resource policy type for share
+//
+// This resource policy type allows resources to be shared between
+// multiple different releases.
+const sharePolicy = "share"
+
 func filterManifestsToKeep(manifests []releaseutil.Manifest) (keep, remaining []releaseutil.Manifest) {
+	return filterManifestsByPolicyType(manifests, keepPolicy)
+}
+
+func filterManifestsToShare(manifests []releaseutil.Manifest) (share, remaining []releaseutil.Manifest) {
+	return filterManifestsByPolicyType(manifests, sharePolicy)
+}
+
+func filterManifestsByPolicyType(manifests []releaseutil.Manifest, filteredPolicyType string) (included, excluded []releaseutil.Manifest) {
 	for _, m := range manifests {
 		if m.Head.Metadata == nil || m.Head.Metadata.Annotations == nil || len(m.Head.Metadata.Annotations) == 0 {
-			remaining = append(remaining, m)
+			excluded = append(excluded, m)
 			continue
 		}
 
 		resourcePolicyType, ok := m.Head.Metadata.Annotations[resourcePolicyAnno]
 		if !ok {
-			remaining = append(remaining, m)
+			excluded = append(excluded, m)
 			continue
 		}
 
 		resourcePolicyType = strings.ToLower(strings.TrimSpace(resourcePolicyType))
-		if resourcePolicyType == keepPolicy {
-			keep = append(keep, m)
+		if resourcePolicyType == filteredPolicyType {
+			included = append(included, m)
 		}
 
 	}
-	return keep, remaining
+	return included, excluded
 }
+
