@@ -199,18 +199,37 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 		return upgradedRelease, errors.Wrap(err, "unable to build kubernetes objects from new release manifest")
 	}
 
+	caps, err := u.cfg.getCapabilities()
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "could not get apiVersions from Kubernetes")
+	}
+	manifests := releaseutil.SplitManifests(upgradedRelease.Manifest)
+	_, files, err := releaseutil.SortManifests(manifests, caps.APIVersions, releaseutil.InstallOrder)
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "corrupted release record. You must manually delete the resources")
+	}
+
+	sharedManifests, _ := filterManifestsToShare(files)
 	// Do a basic diff using gvk + name to figure out what new resources are being created so we can validate they don't already exist
 	existingResources := make(map[string]bool)
 	for _, r := range current {
 		existingResources[objectKey(r)] = true
 	}
 
+	sharedResources := make(map[string]bool)
+	for _, m := range sharedManifests {
+		// TODO: remove this hack. Seems like bad practice to have this implicit contract with the objectKey function...
+		key := fmt.Sprintf("%s/%s/%s", m.Head.Version, m.Head.Kind, m.Name)
+		sharedResources[key] = true
+	}
+
 	var toBeCreated kube.ResourceList
 	for _, r := range target {
-		if !existingResources[objectKey(r)] {
+		if !existingResources[objectKey(r)] && !sharedResources[objectKey(r)] {
 			toBeCreated = append(toBeCreated, r)
 		}
 	}
+
 
 	if err := existingResourceConflict(toBeCreated); err != nil {
 		return nil, errors.Wrap(err, "rendered manifests contain a new resource that already exists. Unable to continue with update")
