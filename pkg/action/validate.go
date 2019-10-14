@@ -46,7 +46,7 @@ func existingResourceConflict(resources kube.ResourceList) error {
 	return err
 }
 
-func resourcesToBeCreated(resources kube.ResourceList, sharedResource map[string]bool) (kube.ResourceList, error) {
+func resourcesToBeCreated(resources kube.ResourceList, preferExistingResource map[string]bool) (kube.ResourceList, error) {
 	toBeCreated := kube.ResourceList{}
 	err := resources.Visit(func(info *resource.Info, err error) error {
 		if err != nil {
@@ -64,7 +64,7 @@ func resourcesToBeCreated(resources kube.ResourceList, sharedResource map[string
 		}
 
 		gvk := info.Object.GetObjectKind().GroupVersionKind()
-		if sharedResource[objectKey(gvk, info.Name)] {
+		if preferExistingResource[objectKey(gvk, info.Name)] {
 			return nil
 		}
 		return fmt.Errorf("existing resource conflict: kind: %s, namespace: %s, name: %s", info.Mapping.GroupVersionKind.Kind, info.Namespace, info.Name)

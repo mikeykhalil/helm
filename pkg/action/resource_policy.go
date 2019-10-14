@@ -31,18 +31,17 @@ const resourcePolicyAnno = "helm.sh/resource-policy"
 // during an uninstallRelease action.
 const keepPolicy = "keep"
 
-// sharePolicy is the resource policy type for share
+// preferExistingPolicy is the resource policy tpye for prefer-existing.
 //
-// This resource policy type allows resources to be shared between
-// multiple different releases.
-const sharePolicy = "share"
+// This resource policy type indicates to Helm that this resource should only be created if it does not already exist.
+const preferExistingPolicy = "prefer-existing"
 
 func filterManifestsToKeep(manifests []releaseutil.Manifest) (keep, remaining []releaseutil.Manifest) {
 	return filterManifestsByPolicyType(manifests, keepPolicy)
 }
 
-func filterManifestsToShare(manifests []releaseutil.Manifest) (share, remaining []releaseutil.Manifest) {
-	return filterManifestsByPolicyType(manifests, sharePolicy)
+func filterManifestsToPreferExisting(manifests []releaseutil.Manifest) (preferExisting, remaining []releaseutil.Manifest) {
+	return filterManifestsByPolicyType(manifests, preferExistingPolicy)
 }
 
 func filterManifestsByPolicyType(manifests []releaseutil.Manifest, filteredPolicyType string) (included, excluded []releaseutil.Manifest) {

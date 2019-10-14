@@ -207,7 +207,17 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 		return upgradedRelease, errors.Wrap(err, "corrupted release record. You must manually delete the resources")
 	}
 
-	sharedManifests, _ := filterManifestsToShare(files)
+	preferExistingManifests, _ := filterManifestsToPreferExisting(files)
+	preferExistingResources := make(map[string]bool)
+	for _, m := range preferExistingManifests {
+		gvk := schema.GroupVersionKind{
+			Group:   "",
+			Version: m.Head.Version,
+			Kind:   m.Head.Kind,
+		}
+		preferExistingResources[objectKey(gvk, m.Head.Metadata.Name)] = true
+	}
+
 	// Do a basic diff using gvk + name to figure out what new resources are being created so we can validate they don't already exist
 	existingResources := make(map[string]bool)
 	for _, r := range current {
@@ -215,24 +225,17 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 		existingResources[objectKey(gvk, r.Name)] = true
 	}
 
-	sharedResources := make(map[string]bool)
-	for _, m := range sharedManifests {
-		gvk := schema.GroupVersionKind{
-			Group:   "",
-			Version: m.Head.Version,
-			Kind:   m.Head.Kind,
-		}
-		sharedResources[objectKey(gvk, m.Head.Metadata.Name)] = true
-	}
-
 	var toBeCreated kube.ResourceList
 	for _, r := range target {
 		gvk := r.Object.GetObjectKind().GroupVersionKind()
-		if !existingResources[objectKey(gvk, r.Name)] && !sharedResources[objectKey(gvk, r.Name)] {
+		if !existingResources[objectKey(gvk, r.Name)] {
 			toBeCreated = append(toBeCreated, r)
 		}
 	}
-
+	toBeCreated, err = resourcesToBeCreated(toBeCreated, existingResources)
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "could not determine resources to be created")
+	}
 
 	if err := existingResourceConflict(toBeCreated); err != nil {
 		return nil, errors.Wrap(err, "rendered manifests contain a new resource that already exists. Unable to continue with update")

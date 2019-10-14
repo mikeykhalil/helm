@@ -238,17 +238,15 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 		return nil, errors.Wrap(err, "corrupted release record. You must manually delete the resources")
 	}
 
-	// 	  Do we still want these resources to be "shared"? if so, we may need to bake in some additional logic
-	//    Otherwise, we can probably just leave it at "create if DNE" and be done with this?
-	sharedManifests, _ := filterManifestsToShare(files)
-	sharedResources := make(map[string]bool)
-	for _, m := range sharedManifests {
+	preferExistingManifests, _ := filterManifestsToPreferExisting(files)
+	preferExistingResources := make(map[string]bool)
+	for _, m := range preferExistingManifests {
 		gvk := schema.GroupVersionKind{
 			Group:   "",
 			Version: m.Head.Version,
 			Kind:   m.Head.Kind,
 		}
-		sharedResources[objectKey(gvk, m.Head.Metadata.Name)] = true
+		preferExistingResources[objectKey(gvk, m.Head.Metadata.Name)] = true
 	}
 
 	// Install requires an extra validation step of checking that resources
@@ -260,7 +258,7 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 	var toBeCreated kube.ResourceList
 	if !i.ClientOnly {
 		var err error
-		if toBeCreated, err = resourcesToBeCreated(resources, sharedResources); err != nil {
+		if toBeCreated, err = resourcesToBeCreated(resources, preferExistingResources); err != nil {
 			return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with install")
 		}
 	}
