@@ -19,7 +19,9 @@ package action
 import (
 	"bytes"
 	"fmt"
+	"helm.sh/helm/v3/pkg/kube"
 	"io/ioutil"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"os"
 	"path"
 	"path/filepath"
@@ -230,14 +232,33 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 		return nil, errors.Wrap(err, "unable to build kubernetes objects from release manifest")
 	}
 
+	manifests := releaseutil.SplitManifests(rel.Manifest)
+	_, files, err := releaseutil.SortManifests(manifests, caps.APIVersions, releaseutil.InstallOrder)
+	if err != nil {
+		return nil, errors.Wrap(err, "corrupted release record. You must manually delete the resources")
+	}
+
+	preferExistingManifests, _ := filterManifestsToPreferExisting(files)
+	preferExistingResources := make(map[string]bool)
+	for _, m := range preferExistingManifests {
+		gvk := schema.GroupVersionKind{
+			Group:   "",
+			Version: m.Head.Version,
+			Kind:   m.Head.Kind,
+		}
+		preferExistingResources[objectKey(gvk, m.Head.Metadata.Name)] = true
+	}
+
 	// Install requires an extra validation step of checking that resources
 	// don't already exist before we actually create resources. If we continue
 	// forward and create the release object with resources that already exist,
 	// we'll end up in a state where we will delete those resources upon
 	// deleting the release because the manifest will be pointing at that
 	// resource
+	var toBeCreated kube.ResourceList
 	if !i.ClientOnly {
-		if err := existingResourceConflict(resources); err != nil {
+		var err error
+		if toBeCreated, err = resourcesToBeCreated(resources, preferExistingResources); err != nil {
 			return nil, errors.Wrap(err, "rendered manifests contain a resource that already exists. Unable to continue with install")
 		}
 	}
@@ -274,12 +295,12 @@ func (i *Install) Run(chrt *chart.Chart, vals map[string]interface{}) (*release.
 	// At this point, we can do the install. Note that before we were detecting whether to
 	// do an update, but it's not clear whether we WANT to do an update if the re-use is set
 	// to true, since that is basically an upgrade operation.
-	if _, err := i.cfg.KubeClient.Create(resources); err != nil {
+	if _, err := i.cfg.KubeClient.Create(toBeCreated); err != nil {
 		return i.failRelease(rel, err)
 	}
 
 	if i.Wait {
-		if err := i.cfg.KubeClient.Wait(resources, i.Timeout); err != nil {
+		if err := i.cfg.KubeClient.Wait(toBeCreated, i.Timeout); err != nil {
 			return i.failRelease(rel, err)
 		}
 

@@ -19,18 +19,17 @@ package action
 import (
 	"bytes"
 	"fmt"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/cli-runtime/pkg/resource"
-
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Upgrade is the action for upgrading releases.
@@ -198,17 +197,44 @@ func (u *Upgrade) performUpgrade(originalRelease, upgradedRelease *release.Relea
 		return upgradedRelease, errors.Wrap(err, "unable to build kubernetes objects from new release manifest")
 	}
 
+	caps, err := u.cfg.getCapabilities()
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "could not get apiVersions from Kubernetes")
+	}
+	manifests := releaseutil.SplitManifests(upgradedRelease.Manifest)
+	_, files, err := releaseutil.SortManifests(manifests, caps.APIVersions, releaseutil.InstallOrder)
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "corrupted release record. You must manually delete the resources")
+	}
+
+	preferExistingManifests, _ := filterManifestsToPreferExisting(files)
+	preferExistingResources := make(map[string]bool)
+	for _, m := range preferExistingManifests {
+		gvk := schema.GroupVersionKind{
+			Group:   "",
+			Version: m.Head.Version,
+			Kind:   m.Head.Kind,
+		}
+		preferExistingResources[objectKey(gvk, m.Head.Metadata.Name)] = true
+	}
+
 	// Do a basic diff using gvk + name to figure out what new resources are being created so we can validate they don't already exist
 	existingResources := make(map[string]bool)
 	for _, r := range current {
-		existingResources[objectKey(r)] = true
+		gvk := r.Object.GetObjectKind().GroupVersionKind()
+		existingResources[objectKey(gvk, r.Name)] = true
 	}
 
 	var toBeCreated kube.ResourceList
 	for _, r := range target {
-		if !existingResources[objectKey(r)] {
+		gvk := r.Object.GetObjectKind().GroupVersionKind()
+		if !existingResources[objectKey(gvk, r.Name)] {
 			toBeCreated = append(toBeCreated, r)
 		}
+	}
+	toBeCreated, err = resourcesToBeCreated(toBeCreated, existingResources)
+	if err != nil {
+		return upgradedRelease, errors.Wrap(err, "could not determine resources to be created")
 	}
 
 	if err := existingResourceConflict(toBeCreated); err != nil {
@@ -412,7 +438,6 @@ func recreate(cfg *Configuration, resources kube.ResourceList) error {
 	return nil
 }
 
-func objectKey(r *resource.Info) string {
-	gvk := r.Object.GetObjectKind().GroupVersionKind()
-	return fmt.Sprintf("%s/%s/%s", gvk.GroupVersion().String(), gvk.Kind, r.Name)
+func objectKey(gvk schema.GroupVersionKind, name string) string {
+	return fmt.Sprintf("%s/%s/%s", gvk.GroupVersion().String(), gvk.Kind, name)
 }
